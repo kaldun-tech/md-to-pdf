@@ -7,10 +7,6 @@ import os
 import shutil
 import subprocess
 import sys
-import threading
-import time
-from multiprocessing import Process
-from threading import Thread
 from tqdm import tqdm
 
 import requests
@@ -18,6 +14,7 @@ from bs4 import BeautifulSoup
 from flask import Flask, render_template_string, request
 from pyppeteer import launch
 from werkzeug.serving import make_server
+
 
 @app.route('/shutdown', methods=['POST'])
 def shutdown():
@@ -56,39 +53,29 @@ class FlaskServer:
             self.server = None
 
 
-def disable_links(converted_html):
-    '''Disable all links in the converted HTML file'''
-    soup = BeautifulSoup(converted_html, 'html.parser')
-    for a_tag in soup.find_all('a'):
-        del a_tag['href']  # Remove the href attribute
-    chapter_links = soup.find_all('a', string=lambda text: text and (any(substring in text for substring in root_config['chapter_common_substring'])))
-    i = 0
-    for link in chapter_links:
-        # This logic needs to be adjusted based on the read me structure.
-        link['href'] = '#ch0' + str(i)
-        i += 1
-    return str(soup)
+def read_config():
+    '''Reads and returns the configuration from the json file'''
+    with open('configuration.json', 'r') as config_file:
+        config = json.load(config_file)
+    return config
 
 
-def remove_title(converted_html):
-    '''Removes duplicate page titles from converted HTML'''
-    soup = BeautifulSoup(converted_html, 'html.parser')
-    title_tag = soup.find('title')
-    if title_tag:
-        title_tag.decompose()
-    h2_tags = soup.find_all('h2', class_=root_config['title_class'])
+def find_md_files(directory):
+    '''Reads and returns all the MarkDown (md) files'''
+    md_files = []
+    print("Finding markdown files from the folder ", directory)
+    for root, dirs, files in tqdm(os.walk(directory)):
+        for next_file in files:
+            if file.endswith('.md'):
+                md_files.append(os.path.join(root, next_file))
+    md_files.sort()
+    return md_files
 
-    for tag in h2_tags:
-        tag.decompose()
-    return str(soup)
 
-
-def generate_combined_html(markdown_files, root_config):
-    '''Generates the combined HTML for markdown files given a config'''
-    combined_html = ''
-    for markdown_file in markdown_files:
-        combined_html += render_markdown_to_html(markdown_file, root_config)
-    return combined_html
+def read_md_files(root_config):
+    '''Reads the MD files for given configuration'''
+    directory = root_config['directory']
+    return find_md_files(directory)
 
 
 def render_markdown_to_html(markdown_file, root_config):
@@ -118,6 +105,78 @@ def render_markdown_to_html(markdown_file, root_config):
         html_content.append(child if child.name else str(child))
 
     return html_content
+
+
+def generate_combined_html(markdown_files, root_config):
+    '''Generates the combined HTML for markdown files and given config'''
+    combined_html = ''
+    for markdown_file in markdown_files:
+        combined_html += render_markdown_to_html(markdown_file, root_config)
+    return combined_html
+
+
+def disable_links(converted_html):
+    '''Disable all links in the converted HTML file'''
+    soup = BeautifulSoup(converted_html, 'html.parser')
+    for a_tag in soup.find_all('a'):
+        del a_tag['href']  # Remove the href attribute
+    chapter_links = soup.find_all('a', string=lambda text: text and (any(substring in text for substring in root_config['chapter_common_substring'])))
+    i = 0
+    for link in chapter_links:
+        # This logic needs to be adjusted based on the read me structure.
+        link['href'] = '#ch0' + str(i)
+        i += 1
+    return str(soup)
+
+
+def remove_title(converted_html):
+    '''Removes duplicate page titles from converted HTML'''
+    soup = BeautifulSoup(converted_html, 'html.parser')
+    title_tag = soup.find('title')
+    if title_tag:
+        title_tag.decompose()
+    h2_tags = soup.find_all('h2', class_=root_config['title_class'])
+
+    for tag in h2_tags:
+        tag.decompose()
+    return str(soup)
+
+
+def copy_images(root_config):
+    '''Copy all image files to configured directory'''
+    # Create target directory if it does not exist
+    directory = root_config['directory']
+    print("Copying images to static folder from the folder ", directory)
+    if not os.path.exists(root_config['image_dest']):
+        os.makedirs(root_config['image_dest'])
+
+    # Define the patterns for image files
+    image_patterns = ["*.jpg", "*.jpeg", "*.png", "*.gif", "*.bmp", "*.tiff"]
+
+    # Iterate over all the image patterns
+    for pattern in image_patterns:
+        # Use glob to find all matching files recursively
+        for img_path in tqdm(glob.iglob(os.path.join(directory, '**', pattern), recursive=True)):
+            # Copy each image to the target directory
+            try:
+                shutil.copy(img_path, root_config['image_dest'])
+                print(f"Copied: {img_path}")
+            except PermissionError as e:
+                print(f"Permission error copying {img_path}: {e}")
+            except FileNotFoundError as e:
+                print(f"File not found error copying {img_path}: {e}")
+            except OSError as e:
+                print(f"OS error copying {img_path}: {e}")
+            except shutil.Error as e:
+                print(f"Error copying {img_path}: {e}")
+
+
+def start_server(root_config):
+    '''Starts the Flask server'''
+    app = Flask(__name__)
+    flask_server = FlaskServer(app, host=root_config['flask_host'], port=root_config['flask_port'])
+    flask_server.start()
+    return flask_server
 
 
 async def save_page_as_pdf(root_config):
@@ -170,77 +229,17 @@ async def save_page_as_pdf(root_config):
         return False
 
 
-def copy_images(root_config):
-    '''Copy all image files to a directory'''
-    # Create target directory if it does not exist
-    directory = root_config['directory']
-    print("Copying images to static folder from the folder ", directory)
-    if not os.path.exists(root_config['image_dest']):
-        os.makedirs(root_config['image_dest'])
-
-    # Define the patterns for image files
-    image_patterns = ["*.jpg", "*.jpeg", "*.png", "*.gif", "*.bmp", "*.tiff"]
-
-    # Iterate over all the image patterns
-    for pattern in image_patterns:
-        # Use glob to find all matching files recursively
-        for img_path in tqdm(glob.iglob(os.path.join(directory, '**', pattern), recursive=True)):
-            # Copy each image to the target directory
-            try:
-                shutil.copy(img_path, root_config['image_dest'])
-                print(f"Copied: {img_path}")
-            except PermissionError as e:
-                print(f"Permission error copying {img_path}: {e}")
-            except FileNotFoundError as e:
-                print(f"File not found error copying {img_path}: {e}")
-            except OSError as e:
-                print(f"OS error copying {img_path}: {e}")
-            except shutil.Error as e:
-                print(f"Error copying {img_path}: {e}")
-
-
-def find_md_files(directory):
-    '''Read all the MD files into memory'''
-    md_files = []
-    print("Finding markdown files from the folder ", directory)
-    for root, dirs, files in tqdm(os.walk(directory)):
-        for next_file in files:
-            if file.endswith('.md'):
-                md_files.append(os.path.join(root, next_file))
-    md_files.sort()
-    return md_files
-
-
-def read_config():
-    '''Reads the configuration from the json file'''
-    with open('configuration.json', 'r') as config_file:
-        config = json.load(config_file)
-    return config
-
-
-def read_md_files(root_config):
-    '''Reads the MD files for given configuration'''
-    directory = root_config['directory']
-    return find_md_files(directory)
-
-
-def start_server(root_config):
-    '''Starts the Flask server'''
-    app = Flask(__name__)
-    flask_server = FlaskServer(app, host=root_config['flask_host'], port=root_config['flask_port'])
-    flask_server.start()
-    return flask_server
-
 def cleanup(flask_server, exitcode):
     '''Cleans up the process'''
     flask_server.stop()
     sys.exit(exitcode)
 
+
 # Global variable to store the combined_html
 COMBINED_HTML = ''
 
 def main():
-    '''Main method'''
+    '''Main method orchestrates execution of other functions'''
     root_config = read_config()
     directory = root_config['directory']
     markdown_files = find_md_files(directory)
