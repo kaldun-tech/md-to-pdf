@@ -1,32 +1,23 @@
-import subprocess
-import requests
-import time
-import os
-from bs4 import BeautifulSoup
+'''Converts Markdown (.md) to PDF format'''
+
 import asyncio
-from pyppeteer import launch
-from flask import Flask, render_template_string, request
-import threading
-import json
-import shutil
 import glob
-from tqdm import tqdm
+import json
+import os
+import shutil
+import subprocess
 import sys
-from threading import Thread
-import socket
+import threading
+import time
 from multiprocessing import Process
+from threading import Thread
+from tqdm import tqdm
+
+import requests
+from bs4 import BeautifulSoup
+from flask import Flask, render_template_string, request
+from pyppeteer import launch
 from werkzeug.serving import make_server
-
-
-# Read configurations from  the json file
-json_file_path = 'configuration.json'
-with open(json_file_path, 'r') as file:
-    root_config = json.load(file)
-
-# Create flask endpoint to render final converted html TODO what is this for?
-html_content = ''
-# TODO is this redundant?
-app = Flask(__name__)
 
 @app.route('/shutdown', methods=['POST'])
 def shutdown():
@@ -37,100 +28,32 @@ def shutdown():
     func()
     return 'Server shutting down...'
 
-def check_port_in_use(port):
-    '''Checks whether port is in use'''
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        s.bind(("127.0.0.1", port))
-    except socket.error as e:
-        if e.errno == 98:  # Port is already in use
-            return True
-    finally:
-        s.close()
-    return False
-
 
 @app.route('/')
 def index():
     '''Defines index route for Flask'''
-    soup = BeautifulSoup(html_content, 'html.parser')
-    img_tags = soup.find_all('img')
+    return render_template_string(COMBINED_HTML)
 
-    for img in img_tags:
-        src = img['src']
-        if not src.startswith(('http://', 'https://', '//')):
-            img['src'] = "{{ url_for('static', filename='" + os.path.basename(src) + "') }}"
 
-    body_tag = soup.find('body')
-    body_tag['style'] = root_config['body_style']
+class FlaskServer:
+    '''Defines the Flask server'''
+    def __init__(self, app, host='0.0.0.0', port=5000):
+        self.app = app
+        self.host = host
+        self.port = port
+        self.server = None
 
-    style_tag = soup.find('style')
-
-    if style_tag:
-        style_tag.string += "\n " + root_config['html_style']
-    else:
-        new_style_tag = soup.new_tag('style')
-        new_style_tag.string = root_config['html_style']
-        soup.head.append(new_style_tag)
-
-    markdown_headings = soup.find_all('div', class_=root_config['markDown_heading_class'])
-
-    for heading in markdown_headings:
-        titles = heading.find_all('h1', string=lambda text: text and (root_config['title_page_text_for_break_down'] in text ))
-        if heading.find(id=root_config['title_page_id_for_page_break_down']) or len(titles) > 0:
-            heading['class'] = heading.get('class', []) + [root_config['pageBreak_class']]
-
-    modified_html = str(soup)
-    return render_template_string(modified_html)
-
-port = int(root_config['flask_port'])
-
-def run_flask_app():
-    '''Runs flask app'''
-    # Check if port is already in use
-    global server
-    # App routes defined here
-    server = ServerThread(app)
-    server.start()
-
-class ServerThread(threading.Thread):
-    '''Thread for running Flask server'''
-
-    def __init__(self, app):
-        threading.Thread.__init__(self)
-        self.server = make_server('0.0.0.0', port, app)
-        self.ctx = app.app_context()
-        self.ctx.push()
-
-    def run(self):
-        '''Runs flask server'''
+    def start(self):
+        '''Starts the Flask server'''
+        self.server = make_server(self.host, self.port, self.app)
+        print(f"Flask app running on http://{self.host}:{self.port}")
         self.server.serve_forever()
 
-    def shutdown(self):
-        '''Shuts down flask server'''
-        self.server.shutdown()
-
-def start_server():
-    '''Starts server thread'''
-    global server
-    # TODO is this redundant?
-    flask_app = Flask('md_to_pdf')
-    # App routes defined here
-    server = ServerThread(flask_app)
-    server.start()
-
-def stop_server():
-    '''Stops server thread'''
-    global server
-    server.shutdown()
-
-#start_server()
-if check_port_in_use(port):
-    print(f"Port {port} is already in use. Exiting script.")
-    sys.exit(0)
-
-flask_thread = threading.Thread(target=run_flask_app)
-flask_thread.start()
+    def stop(self):
+        '''Stops the Flask server'''
+        if self.server:
+            self.server.shutdown()
+            self.server = None
 
 
 def disable_links(converted_html):
@@ -160,10 +83,18 @@ def remove_title(converted_html):
     return str(soup)
 
 
-def render_markdown_to_html(markdown_file):
+def generate_combined_html(markdown_files, root_config):
+    '''Generates the combined HTML for markdown files given a config'''
+    combined_html = ''
+    for markdown_file in markdown_files:
+        combined_html += render_markdown_to_html(markdown_file, root_config)
+    return combined_html
+
+
+def render_markdown_to_html(markdown_file, root_config):
     '''Converts the markdown file to html. Each MD file is treated as a new page'''
     print("Converting markdown file ", markdown_file, " to html")
-    #grip_process = subprocess.Popen(['grip', markdown_file , '--user', root_config["grip_user"], '--pass', root_config['grip_pass']])
+    html_content = ''
     grip_process = None
     with open('output.log', 'w') as f:
         grip_process = subprocess.Popen(
@@ -171,29 +102,28 @@ def render_markdown_to_html(markdown_file):
             stdout=f,  # Redirect stdout to a file
             stderr=f   # Redirect stderr to the same file
         )
-        #grip_process.wait()  # Wait for the process to complete
 
-    time.sleep(10)
-    html_content = requests.get(root_config['grip_local']+root_config['grip_port']).text
+    html_content = requests.get(root_config['grip_local'] + root_config['grip_port'], timeout = 30).text
     grip_process.terminate()
 
     html_content = disable_links(html_content)
     html_content = remove_title(html_content)
     soup = BeautifulSoup(html_content, 'html.parser')
     body_tag = soup.find('body')
-    new_div = soup.new_tag('div')
-    new_div['id']= os.path.basename(markdown_file).split('.')[0].split('-')[0]
-    new_div['class'] = new_div.get('class', []) + [root_config['new_page_class']]
+    html_content = soup.new_tag('div')
+    html_content['id']= os.path.basename(markdown_file).split('.')[0].split('-')[0]
+    html_content['class'] = html_content.get('class', []) + [root_config['new_page_class']]
 
     for child in body_tag.children:
-        new_div.append(child if child.name else str(child))
+        html_content.append(child if child.name else str(child))
 
-    return new_div
+    return html_content
 
 
-async def save_page_as_pdf(url, output_pdf_path):
+async def save_page_as_pdf(root_config):
     '''Saves the final html content to pdf'''
-    print(f"Converting md htmls to single PDF file {output_pdf_path}")
+    output_pdf_path = root_config['output_pdf']
+    print(f"Aggregating md htmls to single PDF file {output_pdf_path}")
 
     if os.path.exists(output_pdf_path):
         user_choice = input(f"{output_pdf_path} already exists. Do you want to overwrite it? (yes/no): ").strip().lower()
@@ -209,22 +139,41 @@ async def save_page_as_pdf(url, output_pdf_path):
         pbar.update(1)
         page = await browser.newPage()
         pbar.update(1)
-        await page.goto(url, {'waitUntil': 'networkidle2'})
+        flask_url = root_config['flask_end_point'] + root_config['flask_port']
+        await page.goto(flask_url, {'waitUntil': 'networkidle2'})
         pbar.update(1)
         await page.pdf({ 'path': output_pdf_path, 'format': 'A4', 'displayHeaderFooter': True,'footerTemplate': footer_template,'headerTemplate': header_template})
         pbar.update(1)
         await browser.close()
         pbar.update(1)
         print(f"Page saved as PDF to {output_pdf_path}")
-        stop_server()
-        sys.exit(0)
-    except Exception as e:
+        return True
+    except (TimeoutError) as e:
+        # Implement retry logic or log the error
         print(f"An error occurred: {e}")
+        return False
+    except ValueError as e:
+        # Log the error and provide a meaningful error message
+        print(f"Invalid input or configuration: {e}")
+        return False
+    except PermissionError as e:
+        # Log the error and provide a meaningful error message
+        print(f"Permission error: {e}")
+        return False
+    except MemoryError as e:
+        # Log the error and provide a meaningful error message
+        print(f"Memory error: {e}")
+        return False
+    except Exception as e:
+        # Catch any other unexpected exceptions
+        print(f"An unexpected error occurred: {e}")
+        return False
 
 
-def copy_images():
+def copy_images(root_config):
     '''Copy all image files to a directory'''
     # Create target directory if it does not exist
+    directory = root_config['directory']
     print("Copying images to static folder from the folder ", directory)
     if not os.path.exists(root_config['image_dest']):
         os.makedirs(root_config['image_dest'])
@@ -240,7 +189,13 @@ def copy_images():
             try:
                 shutil.copy(img_path, root_config['image_dest'])
                 print(f"Copied: {img_path}")
-            except Exception as e:
+            except PermissionError as e:
+                print(f"Permission error copying {img_path}: {e}")
+            except FileNotFoundError as e:
+                print(f"File not found error copying {img_path}: {e}")
+            except OSError as e:
+                print(f"OS error copying {img_path}: {e}")
+            except shutil.Error as e:
                 print(f"Error copying {img_path}: {e}")
 
 
@@ -255,33 +210,56 @@ def find_md_files(directory):
     md_files.sort()
     return md_files
 
-# Main
 
-directory = root_config['directory']  # Replace with your directory path
-markdown_files = find_md_files(directory)
-copy_images()
+def read_config():
+    '''Reads the configuration from the json file'''
+    with open('configuration.json', 'r') as config_file:
+        config = json.load(config_file)
+    return config
 
 
-if 0 < len(markdown_files):
-    print("Markdown files found: ", len(markdown_files))
-    outPutPdf = []
-    firstPageContent = root_config['first_page_content']
-    html_cont = root_config['html_cont_first'] + firstPageContent + root_config['html_cont_last']
-    soupParent = BeautifulSoup(html_cont, 'html.parser')
-    parentBody = soupParent.find("body")
+def read_md_files(root_config):
+    '''Reads the MD files for given configuration'''
+    directory = root_config['directory']
+    return find_md_files(directory)
 
-    for file in tqdm(markdown_files):
-        print("Processing file:",file)
-        html = render_markdown_to_html(file)
-        parentBody.append(html)
 
-    # Delete the output.log file after the process completes
-    if os.path.exists("output.log"):
-        os.remove("output.log")
-    # TODO what is this?
-    html_content = str(soupParent)
-    asyncio.get_event_loop().run_until_complete(save_page_as_pdf(root_config['flask_end_point']+root_config['flask_port'], root_config['ouput_file']))
-else:
-    print("No Markdown files found and program now exit!")
-    print("Press Ctrl+C to exit!")       
-    sys.exit(0)
+def start_server(root_config):
+    '''Starts the Flask server'''
+    app = Flask(__name__)
+    flask_server = FlaskServer(app, host=root_config['flask_host'], port=root_config['flask_port'])
+    flask_server.start()
+    return flask_server
+
+def cleanup(flask_server, exitcode):
+    '''Cleans up the process'''
+    flask_server.stop()
+    sys.exit(exitcode)
+
+# Global variable to store the combined_html
+COMBINED_HTML = ''
+
+def main():
+    '''Main method'''
+    root_config = read_config()
+    directory = root_config['directory']
+    markdown_files = find_md_files(directory)
+
+    if markdown_files:
+        print(f"Markdown files found: {len(markdown_files)}")
+        copy_images(root_config)
+        combined_html = generate_combined_html(markdown_files, root_config)
+        global COMBINED_HTML
+        COMBINED_HTML = combined_html
+        flask_server = start_server(root_config)
+        asyncio.get_event_loop().run_until_complete(save_page_as_pdf(root_config))
+        exitcode = 0
+    else:
+        print("ERROR: No Markdown files found.")
+        exitcode = 1
+
+    cleanup(flask_server, exitcode)
+
+
+if __name__ == "__main__":
+    main()
