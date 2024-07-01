@@ -15,6 +15,7 @@ from flask import Flask, render_template_string, request
 from pyppeteer import launch
 from werkzeug.serving import make_server
 
+app = Flask(__name__)
 
 @app.route('/shutdown', methods=['POST'])
 def shutdown():
@@ -29,20 +30,22 @@ def shutdown():
 @app.route('/')
 def index():
     '''Defines index route for Flask'''
-    return render_template_string(COMBINED_HTML)
+    combined_html = app.config['COMBINED_HTML']
+    return render_template_string(combined_html)
 
 
 class FlaskServer:
     '''Defines the Flask server'''
-    def __init__(self, app, host='0.0.0.0', port=5000):
-        self.app = app
+    def __init__(self, flask_app, combined_html, host='0.0.0.0', port=5000):
+        self.flask_app = flask_app
+        self.flask_app.config['COMBINED_HTML'] = combined_html
         self.host = host
         self.port = port
         self.server = None
 
     def start(self):
         '''Starts the Flask server'''
-        self.server = make_server(self.host, self.port, self.app)
+        self.server = make_server(self.host, self.port, self.flask_app)
         print(f"Flask app running on http://{self.host}:{self.port}")
         self.server.serve_forever()
 
@@ -55,7 +58,7 @@ class FlaskServer:
 
 def read_config():
     '''Reads and returns the configuration from the json file'''
-    with open('configuration.json', 'r') as config_file:
+    with open('configuration.json', 'r', encoding='utf-8') as config_file:
         config = json.load(config_file)
     return config
 
@@ -66,7 +69,7 @@ def find_md_files(directory):
     print("Finding markdown files from the folder ", directory)
     for root, dirs, files in tqdm(os.walk(directory)):
         for next_file in files:
-            if file.endswith('.md'):
+            if next_file.endswith('.md'):
                 md_files.append(os.path.join(root, next_file))
     md_files.sort()
     return md_files
@@ -83,18 +86,18 @@ def render_markdown_to_html(markdown_file, root_config):
     print("Converting markdown file ", markdown_file, " to html")
     html_content = ''
     grip_process = None
-    with open('output.log', 'w') as f:
-        grip_process = subprocess.Popen(
-            ['grip', markdown_file, '--user', root_config["grip_user"], '--pass', root_config['grip_pass']],
-            stdout=f,  # Redirect stdout to a file
-            stderr=f   # Redirect stderr to the same file
-        )
+    with open('output.log', 'w', encoding='utf-8') as out_log:
+        # Redirect stdout and stderr to file
+        grip_args = ['grip', markdown_file, '--user',
+                root_config["grip_user"], '--pass', root_config['grip_pass']]
+        grip_process = subprocess.Popen(grip_args, stdout=out_log, stderr=out_log)
 
-    html_content = requests.get(root_config['grip_local'] + root_config['grip_port'], timeout = 30).text
+    grip_local_url = root_config['grip_local'] + root_config['grip_port']
+    html_content = requests.get(grip_local_url, timeout = 30).text
     grip_process.terminate()
 
-    html_content = disable_links(html_content)
-    html_content = remove_title(html_content)
+    html_content = disable_links(html_content, root_config)
+    html_content = remove_title(html_content, root_config)
     soup = BeautifulSoup(html_content, 'html.parser')
     body_tag = soup.find('body')
     html_content = soup.new_tag('div')
@@ -115,12 +118,14 @@ def generate_combined_html(markdown_files, root_config):
     return combined_html
 
 
-def disable_links(converted_html):
-    '''Disable all links in the converted HTML file'''
+def disable_links(converted_html, root_config):
+    '''Disable all links in the converted HTML file for given config'''
     soup = BeautifulSoup(converted_html, 'html.parser')
     for a_tag in soup.find_all('a'):
         del a_tag['href']  # Remove the href attribute
-    chapter_links = soup.find_all('a', string=lambda text: text and (any(substring in text for substring in root_config['chapter_common_substring'])))
+    chapter_links = soup.find_all('a', string=lambda text: text and (
+        any(substring in text for substring in root_config['chapter_common_substring'])
+    ))
     i = 0
     for link in chapter_links:
         # This logic needs to be adjusted based on the read me structure.
@@ -129,8 +134,8 @@ def disable_links(converted_html):
     return str(soup)
 
 
-def remove_title(converted_html):
-    '''Removes duplicate page titles from converted HTML'''
+def remove_title(converted_html, root_config):
+    '''Removes duplicate page titles from converted HTML for given config'''
     soup = BeautifulSoup(converted_html, 'html.parser')
     title_tag = soup.find('title')
     if title_tag:
@@ -165,27 +170,27 @@ def copy_images(root_config):
                 print(f"Permission error copying {img_path}: {e}")
             except FileNotFoundError as e:
                 print(f"File not found error copying {img_path}: {e}")
-            except OSError as e:
-                print(f"OS error copying {img_path}: {e}")
             except shutil.Error as e:
                 print(f"Error copying {img_path}: {e}")
+            except OSError as e:
+                print(f"OS error copying {img_path}: {e}")
 
 
-def start_server(root_config):
+def start_server(root_config, combined_html):
     '''Starts the Flask server'''
-    app = Flask(__name__)
-    flask_server = FlaskServer(app, host=root_config['flask_host'], port=root_config['flask_port'])
+    flask_server = FlaskServer(app, combined_html, host=root_config['flask_host'], port=root_config['flask_port'])
     flask_server.start()
     return flask_server
 
 
-async def save_page_as_pdf(root_config):
+async def save_page_as_pdf(root_config, combined_html):
     '''Saves the final html content to pdf'''
     output_pdf_path = root_config['output_pdf']
     print(f"Aggregating md htmls to single PDF file {output_pdf_path}")
 
     if os.path.exists(output_pdf_path):
-        user_choice = input(f"{output_pdf_path} already exists. Do you want to overwrite it? (yes/no): ").strip().lower()
+        user_prompt = f"{output_pdf_path} already exists. Do you want to overwrite it? (yes/no): "
+        user_choice = input(user_prompt).strip().lower()
         if user_choice == 'no':
             output_pdf_path = input("Enter a new file name for the pdf: ").strip()
 
@@ -194,6 +199,7 @@ async def save_page_as_pdf(root_config):
 
     header_template = root_config['header_template']
     try:
+        # TODO Is this done better using pdfkit?
         browser = await launch(headless=True)
         pbar.update(1)
         page = await browser.newPage()
@@ -201,13 +207,15 @@ async def save_page_as_pdf(root_config):
         flask_url = root_config['flask_end_point'] + root_config['flask_port']
         await page.goto(flask_url, {'waitUntil': 'networkidle2'})
         pbar.update(1)
-        await page.pdf({ 'path': output_pdf_path, 'format': 'A4', 'displayHeaderFooter': True,'footerTemplate': footer_template,'headerTemplate': header_template})
+        pdf_dict = {'path': output_pdf_path, 'format': 'A4', 'displayHeaderFooter': True,
+                    'footerTemplate': footer_template,'headerTemplate': header_template}
+        await page.pdf(pdf_dict)
         pbar.update(1)
         await browser.close()
         pbar.update(1)
         print(f"Page saved as PDF to {output_pdf_path}")
         return True
-    except (TimeoutError) as e:
+    except (TimeoutError, ConnectionError) as e:
         # Implement retry logic or log the error
         print(f"An error occurred: {e}")
         return False
@@ -223,10 +231,6 @@ async def save_page_as_pdf(root_config):
         # Log the error and provide a meaningful error message
         print(f"Memory error: {e}")
         return False
-    except Exception as e:
-        # Catch any other unexpected exceptions
-        print(f"An unexpected error occurred: {e}")
-        return False
 
 
 def cleanup(flask_server, exitcode):
@@ -234,9 +238,6 @@ def cleanup(flask_server, exitcode):
     flask_server.stop()
     sys.exit(exitcode)
 
-
-# Global variable to store the combined_html
-COMBINED_HTML = ''
 
 def main():
     '''Main method orchestrates execution of other functions'''
@@ -246,12 +247,10 @@ def main():
 
     if markdown_files:
         print(f"Markdown files found: {len(markdown_files)}")
-        copy_images(root_config)
         combined_html = generate_combined_html(markdown_files, root_config)
-        global COMBINED_HTML
-        COMBINED_HTML = combined_html
-        flask_server = start_server(root_config)
-        asyncio.get_event_loop().run_until_complete(save_page_as_pdf(root_config))
+        copy_images(root_config)
+        flask_server = start_server(root_config, combined_html)
+        asyncio.get_event_loop().run_until_complete(save_page_as_pdf(root_config, combined_html))
         exitcode = 0
     else:
         print("ERROR: No Markdown files found.")
