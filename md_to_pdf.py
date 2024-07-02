@@ -14,6 +14,8 @@ from bs4 import BeautifulSoup
 from flask import Flask, render_template_string, request
 from pyppeteer import launch
 from werkzeug.serving import make_server
+import threading
+import time
 
 app = Flask(__name__)
 
@@ -31,22 +33,53 @@ def shutdown():
 def index():
     '''Defines index route for Flask'''
     combined_html = app.config['COMBINED_HTML']
+    soup = BeautifulSoup(combined_html, 'html.parser')
+    
+    img_tags = soup.find_all('img')
+    
+    for img in img_tags:
+        src = img['src']
+        
+        if not src.startswith(('http://', 'https://', '//')):
+            img['src'] = "{{ url_for('static', filename='" + os.path.basename(src) + "') }}"
+    
+    body_tag = soup.find('body')
+    body_tag['style'] = app.config['root_configuration']['body_style']
+
+    style_tag = soup.find('style')
+
+    if style_tag:
+        style_tag.string += "\n " + app.config['root_configuration']['html_style']
+    else:
+        new_style_tag = soup.new_tag('style')
+        new_style_tag.string = app.config['root_configuration']['html_style']
+        soup.head.append(new_style_tag)
+
+    markdown_headings = soup.find_all('div', class_=app.config['root_configuration']['markDown_heading_class'])
+
+    for heading in markdown_headings:
+        titles = heading.find_all('h1', string=lambda text: text and (app.config['root_configuration']['title_page_text_for_break_down'] in text ))
+        if heading.find(id=app.config['root_configuration']['title_page_id_for_page_break_down']) or len(titles) > 0:
+            heading['class'] = heading.get('class', []) + [app.config['root_configuration']['pageBreak_class']]
+
+    combined_html = str(soup)
     return render_template_string(combined_html)
 
 
-class FlaskServer:
+class FlaskServer(threading.Thread):
     '''Defines the Flask server'''
-    def __init__(self, flask_app, combined_html, host='0.0.0.0', port=5000):
+    def __init__(self, flask_app, combined_html, host='0.0.0.0', port=5000, root_config=None):
+        threading.Thread.__init__(self)
         self.flask_app = flask_app
         self.flask_app.config['COMBINED_HTML'] = combined_html
+        self.flask_app.config['root_configuration'] = root_config
         self.host = host
         self.port = port
         self.server = None
 
-    def start(self):
+    def run(self):
         '''Starts the Flask server'''
         self.server = make_server(self.host, self.port, self.flask_app)
-        print(f"Flask app running on http://{self.host}:{self.port}")
         self.server.serve_forever()
 
     def stop(self):
@@ -91,7 +124,7 @@ def render_markdown_to_html(markdown_file, root_config):
         grip_args = ['grip', markdown_file, '--user',
                 root_config["grip_user"], '--pass', root_config['grip_pass']]
         grip_process = subprocess.Popen(grip_args, stdout=out_log, stderr=out_log)
-
+    time.sleep(10)
     grip_local_url = root_config['grip_local'] + root_config['grip_port']
     html_content = requests.get(grip_local_url, timeout = 30).text
     grip_process.terminate()
@@ -112,10 +145,17 @@ def render_markdown_to_html(markdown_file, root_config):
 
 def generate_combined_html(markdown_files, root_config):
     '''Generates the combined HTML for markdown files and given config'''
+    firstPageContent = root_config['first_page_content']
     combined_html = ''
+    combined_html += root_config['html_cont_first']
+    combined_html += firstPageContent
+    soupParent = BeautifulSoup(combined_html, 'html.parser')
+    parentBody = soupParent.find("body")
+    
+    #combined_html = ''
     for markdown_file in markdown_files:
-        combined_html += render_markdown_to_html(markdown_file, root_config)
-    return combined_html
+        parentBody.append(render_markdown_to_html(markdown_file, root_config))
+    return str(soupParent)
 
 
 def disable_links(converted_html, root_config):
@@ -178,7 +218,7 @@ def copy_images(root_config):
 
 def start_server(root_config, combined_html):
     '''Starts the Flask server'''
-    flask_server = FlaskServer(app, combined_html, host=root_config['flask_host'], port=root_config['flask_port'])
+    flask_server = FlaskServer(app, combined_html, host=root_config['flask_host'], port=root_config['flask_port'], root_config=root_config)
     flask_server.start()
     return flask_server
 
@@ -235,20 +275,23 @@ async def save_page_as_pdf(root_config, combined_html):
 
 def cleanup(flask_server, exitcode):
     '''Cleans up the process'''
-    flask_server.stop()
+    if flask_server:
+        flask_server.stop()
     sys.exit(exitcode)
 
 
 def main():
     '''Main method orchestrates execution of other functions'''
+    flask_server = None
     root_config = read_config()
     directory = root_config['directory']
     markdown_files = find_md_files(directory)
 
     if markdown_files:
         print(f"Markdown files found: {len(markdown_files)}")
-        combined_html = generate_combined_html(markdown_files, root_config)
         copy_images(root_config)
+        combined_html = generate_combined_html(markdown_files, root_config)
+        
         flask_server = start_server(root_config, combined_html)
         asyncio.get_event_loop().run_until_complete(save_page_as_pdf(root_config, combined_html))
         exitcode = 0

@@ -18,8 +18,9 @@
     "markDown_heading_class":"markdown-heading",
     "pageBreak_class" : "markdown-break",
     "new_page_class" : "new-page",
-    "ouput_file": "converted_document.pdf",
+    "output_pdf": "converted_document.pdf",
     "flask_end_point": "http://localhost:",
+    "flask_host": "0.0.0.0",
     "image_dest":"static",
     "flask_port":"5000"
 }
