@@ -1,12 +1,9 @@
 {
     "footer_template": "<div style=\"width: 100%; text-align: center; font-size: 10px; padding: 10px 0;\">Page <span class=\"pageNumber\"></span> of <span class=\"totalPages\"></span></div",
     "header_template": "<div style=\"width: 100%; text-align: center; font-size: 10px; padding: 10px 0;\"></div>",
-    "directory": "/home/kaldun_tech/buggy-to-bulletproof",
     "first_page_content": "<div>From Buggy to Bulletproof</div><div>How to Build Better Software with Test-Driven Development</div><div>By Taras Smereka</div>",
     "html_cont_first": "<!DOCTYPE html><html lang=\"en\"><head></head><body><div style=\"display:flex;align-items: center;flex-direction: column;justify-content: center;margin-top: 60%;font-size: x-large;font-weight: 700;\" class=\"new-page\"> ",
     "html_cont_last": "</div></body></html>",
-    "grip_user":"",
-    "grip_pass":"",
     "grip_local":"http://localhost:",
     "grip_port":"6419",
     "title_class":"Box-title",
@@ -18,9 +15,8 @@
     "markDown_heading_class":"markdown-heading",
     "pageBreak_class" : "markdown-break",
     "new_page_class" : "new-page",
-    "output_pdf": "converted_document.pdf",
     "flask_end_point": "http://localhost:",
     "flask_host": "0.0.0.0",
-    "image_dest":"static",
+    "image_dest":"intermediate",
     "flask_port":"5000"
 }

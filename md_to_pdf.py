@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import sys
 import threading
-import time
+import argparse
 from tqdm import tqdm
 
 import requests
@@ -18,6 +18,7 @@ from flask import Flask, render_template_string, request
 from pyppeteer import launch
 from werkzeug.serving import make_server
 import logging
+import argparse
 
 app = Flask(__name__)
 logger = logging.getLogger(__name__)
@@ -94,11 +95,20 @@ class FlaskServer(threading.Thread):
             self.server = None
 
 
-def read_config():
+def read_config(config_file):
     '''Reads and returns the configuration from the json file'''
-    with open('configuration.json', 'r', encoding='utf-8') as config_file:
+    with open(config_file, 'r', encoding='utf-8') as config_file:
         config = json.load(config_file)
     return config
+
+
+def save_custom_config(root_config, directory, output_pdf, grip_user, grip_pass):
+    '''Customizes the configuration with command-line inputs'''
+    root_config['directory'] = directory
+    root_config['output_pdf'] = output_pdf
+    root_config['grip_user'] = grip_user
+    root_config['grip_pass'] = grip_pass
+    return root_config
 
 
 def find_md_files(directory):
@@ -293,13 +303,27 @@ def cleanup(flask_server, exitcode):
     sys.exit(exitcode)
 
 
+def create_argparse():
+    '''Creates the argument parser'''
+    parser = argparse.ArgumentParser(description='Convert Markdown files to PDF')
+    parser.add_argument('config', type=str, help='Path to the configuration file', default='configuration.json')
+    parser.add_argument('directory', help='Directory containing Markdown files', default='/mnt/e/git/buggy-to-bulletproof')
+    parser.add_argument('output_pdf', help='Output PDF file path', default='pdf/buggy_to_bulletproof.pdf')
+    parser.add_argument('user', required=True, help='GitHub user for Grip')
+    parser.add_argument('password', required=True, help='GitHub password for Grip')
+    return parser
+
+
 def main():
     '''Main method orchestrates execution of other functions'''
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    parser = create_argparse()
+    args = parser.parse_args()
+
     flask_server = None
-    root_config = read_config()
-    directory = root_config['directory']
-    markdown_files = find_md_files(directory)
+    root_config = read_config(args.config)
+    root_config = save_custom_config(root_config, args.directory, args.output_pdf, args.user, args.password)
+    markdown_files = find_md_files(root_config['directory'])
 
     if markdown_files:
         copy_images(root_config)

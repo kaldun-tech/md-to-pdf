@@ -162,6 +162,5 @@ cython_debug/
 #.idea/
 
 # Particular to this project: PDF output and intermediate files
-configuration.json
 intermediate/
 pdf/
