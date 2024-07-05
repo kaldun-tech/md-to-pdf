@@ -22,8 +22,6 @@ The script uses a configuration JSON file to customize various settings. Here ar
 - `first_page_content`: Content for the first page of the PDF.
 - `html_cont_first`: Opening HTML tags for the combined HTML content.
 - `html_cont_last`: Closing HTML tags for the combined HTML content.
-- `grip_user`: Your GitHub username (required).
-- `grip_pass`: Your GitHub password (required).
 - `grip_local`: Hostname part of the `grip` URL.
 - `grip_port`: Port number for the `grip` Flask server.
 - `title_class`: CSS class for titles.
