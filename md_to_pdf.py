@@ -306,11 +306,12 @@ def cleanup(flask_server, exitcode):
 def create_argparse():
     '''Creates the argument parser'''
     parser = argparse.ArgumentParser(description='Convert Markdown files to PDF')
-    parser.add_argument('config', type=str, help='Path to the configuration file', default='configuration.json')
-    parser.add_argument('directory', help='Directory containing Markdown files', default='/mnt/e/git/buggy-to-bulletproof')
-    parser.add_argument('output_pdf', help='Output PDF file path', default='pdf/buggy_to_bulletproof.pdf')
-    parser.add_argument('user', required=True, help='GitHub user for Grip')
-    parser.add_argument('password', required=True, help='GitHub password for Grip')
+    parser.add_argument('--config', type=str, help='Path to the configuration file', default='configuration.json')
+    parser.add_argument('--directory', help='Directory containing Markdown files',
+                        default='/mnt/e/git/buggy-to-bulletproof')
+    parser.add_argument('--out', help='Output PDF file path', default='pdf/buggy_to_bulletproof.pdf', dest='output_pdf')
+    parser.add_argument('grip_user', help='GitHub user for Grip')
+    parser.add_argument('grip_pass', help='GitHub password for Grip')
     return parser
 
 
@@ -322,7 +323,7 @@ def main():
 
     flask_server = None
     root_config = read_config(args.config)
-    root_config = save_custom_config(root_config, args.directory, args.output_pdf, args.user, args.password)
+    root_config = save_custom_config(root_config, args.directory, args.output_pdf, args.grip_user, args.grip_pass)
     markdown_files = find_md_files(root_config['directory'])
 
     if markdown_files:
