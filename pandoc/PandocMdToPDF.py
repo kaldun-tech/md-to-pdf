@@ -1,14 +1,28 @@
+'''Converts Markdown (.md) to PDF format with Pandoc'''
 import os
 import re
 import subprocess
 import threading
 import argparse
-from PIL import Image
 
 class PandocMdToPDF:
-    def __init__(self, directory, output_file, pdf_file):
+    """
+    class PandocMdToPDF
+    """
+    def __init__(self, directory, o_file, pdf_file):
+        """
+        Class constructor
+
+        Parameters:
+        directory (str): The directory string of the repo location.
+        o_file (str): The temp file name to save the combined md file.
+        pdf_file (str): The filename to store PDF file.
+        
+        Returns:
+        Class: Instance of the PandocMdToPDF class.
+        """
         self.directory = directory
-        self.output_file = output_file
+        self.output_file = o_file
         self.pdf_file = pdf_file
         self.markdown_files = []
         self.section_mapping = {}
@@ -127,7 +141,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     # Output Markdown file
-    output_file = 'combined.md'
+    OUT_FILE = 'combined.md'
 
-    combiner = PandocMdToPDF(args.directory, output_file, args.pdf_file)
-    combiner.run(use_threading=True)  # Set to False if you don't want to use threading
+    pd_md_to_pdf = PandocMdToPDF(args.directory, OUT_FILE, args.pdf_file)
+    pd_md_to_pdf.run(use_threading=True)  # Set to False if you don't want to use threading
