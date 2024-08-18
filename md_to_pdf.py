@@ -132,62 +132,77 @@ def read_md_files(root_config):
     return find_md_files(directory)
 
 
-def render_markdown_to_html(markdown_file, root_config):
-    '''Converts the markdown file to html. Each MD file is treated as a new page'''
-    logging.info("Converting markdown file %s to html", markdown_file)
-    html_content = ''
+def read_markdown_file(markdown_file):
+    '''Reads the markdown file'''
     with open(markdown_file, 'r', encoding='utf-8') as md_reader:
         markdown_content = md_reader.read()
+    return markdown_content
 
+
+def render_markdown_to_html(md_file, root_config):
+    '''Converts the markdown file to html. Each MD file is treated as a new page'''
+    logging.info("Beginning conversion of markdown file %s to html", md_file)
+    html_content = ''
+    md_id = os.path.basename(md_file).split('.')[0].split('-')[0]
     grip_url = root_config['grip_local'] + root_config['grip_port']
-    grip_auth = root_config['grip_user'] + ':' + root_config['grip_pass']
-    response = requests.post(grip_url, auth=grip_auth, data=markdown_content.encode('utf-8'), timeout=30)
-    response.raise_for_status()  # Raise an exception for non-2xx status codes
-    html_content = response.text
-    logging.info('Created raw HTML content of length %d', len(html_content))
+    grip_auth = (root_config['grip_user'], root_config['grip_pass'])
 
-    html_content = disable_links(html_content, root_config)
-    html_content = remove_title(html_content, root_config)
-    soup = BeautifulSoup(html_content, 'html.parser')
-    body_tag = soup.find('body')
-    html_content = soup.new_tag('div')
-    html_content['id']= os.path.basename(markdown_file).split('.')[0].split('-')[0]
-    html_content['class'] = html_content.get('class', []) + [root_config['new_page_class']]
+    with grip_server(root_config):
+        md_content = read_markdown_file(md_file)
+        try:
+            response = requests.post(grip_url, auth=grip_auth, data=md_content.encode('utf-8'),
+                                     headers={'Content-Type': 'text/markdown'}, timeout=30)
+            response.raise_for_status()
+            html_content = response.text
+            logging.info('Created raw HTML content of length %d', len(html_content))
+        except requests.exceptions.RequestException as e:
+            logging.error("Error rendering %s: %s", md_file, e)
+            return ""
 
-    for child in body_tag.children:
-        html_content.append(child if child.name else str(child))
+        html_content = disable_links(html_content, root_config)
+        html_content = remove_title(html_content, root_config)
+        soup = BeautifulSoup(html_content, 'html.parser')
+        body_tag = soup.find('body')
+        html_content = soup.new_tag('div')
+        html_content['id']= md_id
+        html_content['class'] = html_content.get('class', []) + [root_config['new_page_class']]
 
-    logging.info('Rendered final HTML content of length %d', len(html_content))
-    return html_content
+        for child in body_tag.children:
+            html_content.append(child if child.name else str(child))
+
+        logging.info('Rendered final HTML content of length %d', len(html_content))
+        return html_content
 
 
 @contextmanager
-def grip_server(grip_host, grip_port, grip_auth):
+def grip_server(root_config):
     '''Creates a context manager for the grip server'''
-    grip_process = subprocess.Popen(['grip', grip_host, grip_port, grip_auth])
+
+    grip_host = root_config["grip_local"]
+    grip_port = root_config["grip_port"]
+    grip_user = root_config["grip_user"]
+    grip_pass = root_config["grip_pass"]
+    grip_process = subprocess.Popen(['grip', f'--user.host={grip_host}', f'--user.port={grip_port}',
+                                     f'--user.auth={grip_user}:{grip_pass}'])
+    logging.info("Started Grip server on %s:%s", grip_host, grip_port)
+
     try:
         yield grip_process
     finally:
         grip_process.send_signal(signal.SIGTERM)
         grip_process.wait()
+        logging.info("Stopped Grip server")
 
 
 def generate_combined_html(markdown_files, root_config):
     '''Generates the combined HTML for markdown files and given config'''
     logging.info("Generating combined HTML")
     first_page_content = root_config['first_page_content']
-    combined_html = ''
-    combined_html += root_config['html_cont_first']
-    combined_html += first_page_content
+    combined_html = root_config['html_cont_first'] + first_page_content
     soup_parent = BeautifulSoup(combined_html, 'html.parser')
     parent_body = soup_parent.find("body")
-
-    grip_host = f'--user.host={root_config["grip_local"]}'
-    grip_port = f'--user.port={root_config["grip_port"]}'
-    grip_auth = f'--user.auth={root_config["grip_user"]}:{root_config["grip_pass"]}'
-    with grip_server(grip_host, grip_port, grip_auth):
-        for markdown_file in markdown_files:
-            parent_body.append(render_markdown_to_html(markdown_file, root_config))
+    for md_file in markdown_files:
+        parent_body.append(render_markdown_to_html(md_file, root_config))
 
     logging.info("Combined HTML generated")
     return str(soup_parent)
